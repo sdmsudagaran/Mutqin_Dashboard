@@ -143,9 +143,16 @@
             getWeekRange: (date) => {
                 const d = new Date(date);
                 const day = d.getDay();
+                // Hitung hari Senin (1)
                 const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-                const start = new Date(d.setDate(diff));
-                const end = new Date(d.setDate(diff + 6));
+                const start = new Date(d);
+                start.setDate(diff);
+                start.setHours(0,0,0,0);
+                
+                // Hitung hari Sabtu (Senin + 5 hari)
+                const end = new Date(start);
+                end.setDate(start.getDate() + 5); 
+                end.setHours(23,59,59,999);
                 return { start, end };
             },
             isDateInRange: (dateStr, start, end) => {
@@ -311,6 +318,15 @@
                 setSelectedDate(newDate);
             };
 
+            const getDisplayDateText = () => {
+                if (dateMode === 'daily') return utils.formatDateLocal(selectedDate);
+                if (dateMode === 'weekly') {
+                    const { start, end } = utils.getWeekRange(selectedDate);
+                    return `${utils.formatDateLocal(start)} - ${utils.formatDateLocal(end)}`;
+                }
+                return selectedDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+            };
+
             // --- STREAMING_CHUNK: Dashboard Utama ---
             const renderOverview = () => {
                 const totalSiswa = students.length;
@@ -345,7 +361,7 @@
                     <div className="space-y-6 animate-fade-in" id="printable-area">
                         <div className="flex justify-between items-center mb-2 print-only">
                             <h2 className="text-2xl font-bold">Laporan Dashboard Utama</h2>
-                            <p className="text-gray-500">{utils.formatDateLocal(selectedDate)}</p>
+                            <p className="text-gray-500">{getDisplayDateText()}</p>
                         </div>
 
                         <div className="flex justify-end no-print">
@@ -498,7 +514,7 @@
                         
                         <div className="print-only mb-4 hidden">
                             <h2 className="text-2xl font-bold">Laporan Kelas: {selectedClass === 'ALL' ? 'Semua Kelas' : selectedClass}</h2>
-                            <p className="text-gray-500">{utils.formatDateLocal(selectedDate)}</p>
+                            <p className="text-gray-500">{getDisplayDateText()}</p>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print-grid">
@@ -581,7 +597,7 @@
                         
                         <div className="print-only mb-4 hidden">
                             <h2 className="text-2xl font-bold">Laporan Perbandingan Kelas</h2>
-                            <p className="text-gray-500">{utils.formatDateLocal(selectedDate)}</p>
+                            <p className="text-gray-500">{getDisplayDateText()}</p>
                         </div>
                         
                         <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -805,19 +821,30 @@
                     isOpen: true, title: 'Hapus Riwayat Setoran', isDanger: true,
                     text: `Anda akan menghapus SELURUH riwayat setoran dari tanggal ${utils.formatDateLocal(new Date(delDates.start))} hingga ${utils.formatDateLocal(new Date(delDates.end))}. Aksi ini permanen.`,
                     action: async () => {
-                        // Karena masalah timezone di format API Supabase, amannya kita hapus per baris atau filter match
                         setLoading(true);
                         const sD = delDates.start;
                         const eD = delDates.end;
+                        
+                        // Ekstraksi tanggal dengan kaku: mengabaikan jam, menit, detik dan zona waktu
                         const toDeleteIds = deposits.filter(d => {
-                            const rd = String(d.tanggal || d.date).substring(0,10);
+                            const rawDate = d.tanggal || d.date;
+                            if (!rawDate) return false;
+                            
+                            // Potong paksa 10 karakter pertama (YYYY-MM-DD)
+                            const rd = String(rawDate).trim().substring(0, 10);
                             return rd >= sD && rd <= eD;
-                        }).map(d => d.id); // Asumsi tabel memiliki UUID kolom 'id'
+                        }).map(d => d.id); 
                         
                         if(toDeleteIds.length > 0) {
-                            // Supabase bulk delete limits to chunks sometimes, but for small sets it's fine.
-                            await supabase.from('riwayat_setoran').delete().in('id', toDeleteIds);
+                            // Proses hapus menggunakan in() dengan pembagian batch (maks 500) 
+                            // Ini penting untuk mencegah error batas maksimal Supabase saat menghapus sebulan penuh
+                            const batchSize = 500;
+                            for (let i = 0; i < toDeleteIds.length; i += batchSize) {
+                                const chunk = toDeleteIds.slice(i, i + batchSize);
+                                await supabase.from('riwayat_setoran').delete().in('id', chunk);
+                            }
                         }
+                        
                         fetchData();
                         setModal({ isOpen: false });
                         setDelDates({ start: '', end: '' });
@@ -829,7 +856,7 @@
                 <div className="space-y-6">
                     <div className="card bg-rose-50 border border-rose-100">
                         <h3 className="text-lg font-bold text-rose-800 mb-2">Manajemen Penghapusan Data</h3>
-                        <p className="text-sm text-rose-600 mb-4">Hapus riwayat setoran masal berdasarkan rentang tanggal. Harap berhati-hati.</p>
+                        <p className="text-sm text-rose-600 mb-4">Hapus riwayat setoran masal berdasarkan rentang tanggal. Sistem secara otomatis hanya akan membaca (Tanggal-Bulan-Tahun) dan mengabaikan waktu (Jam-Menit).</p>
                         <div className="flex flex-col md:flex-row gap-4 items-end">
                             <div className="w-full md:w-auto">
                                 <label className="block text-xs font-bold text-rose-700 uppercase mb-1">Dari Tanggal</label>
@@ -878,8 +905,8 @@
                                 </div>
                                 <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-xl p-1.5 shadow-sm">
                                     <button onClick={()=>shiftDate(-1)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition"><Icons.ChevronLeft /></button>
-                                    <div className="flex items-center gap-2 px-3 text-sm font-bold text-slate-700 min-w-[220px] justify-center">
-                                        <span>{utils.formatDateLocal(selectedDate)}{dateMode === 'weekly' ? ' (Minggu Ini)' : ''}</span>
+                                    <div className="flex items-center gap-2 px-3 text-sm font-bold text-slate-700 min-w-[220px] justify-center text-center">
+                                        <span>{getDisplayDateText()}</span>
                                     </div>
                                     <button onClick={()=>shiftDate(1)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition"><Icons.ChevronRight /></button>
                                 </div>
