@@ -822,32 +822,44 @@
                     text: `Anda akan menghapus SELURUH riwayat setoran dari tanggal ${utils.formatDateLocal(new Date(delDates.start))} hingga ${utils.formatDateLocal(new Date(delDates.end))}. Aksi ini permanen.`,
                     action: async () => {
                         setLoading(true);
-                        const sD = delDates.start;
-                        const eD = delDates.end;
-                        
-                        // Ekstraksi tanggal dengan kaku: mengabaikan jam, menit, detik dan zona waktu
-                        const toDeleteIds = deposits.filter(d => {
-                            const rawDate = d.tanggal || d.date;
-                            if (!rawDate) return false;
+                        try {
+                            const sD = delDates.start; // Format "YYYY-MM-DD"
+                            const eD = delDates.end;
                             
-                            // Potong paksa 10 karakter pertama (YYYY-MM-DD)
-                            const rd = String(rawDate).trim().substring(0, 10);
-                            return rd >= sD && rd <= eD;
-                        }).map(d => d.id); 
-                        
-                        if(toDeleteIds.length > 0) {
-                            // Proses hapus menggunakan in() dengan pembagian batch (maks 500) 
-                            // Ini penting untuk mencegah error batas maksimal Supabase saat menghapus sebulan penuh
-                            const batchSize = 500;
-                            for (let i = 0; i < toDeleteIds.length; i += batchSize) {
-                                const chunk = toDeleteIds.slice(i, i + batchSize);
-                                await supabase.from('riwayat_setoran').delete().in('id', chunk);
+                            // 1. Eksekusi Hapus Lapis Pertama (Eksekusi Langsung di Server Database)
+                            // Sangat penting untuk melewati limit 1000 data Supabase saat menghapus puluhan ribu baris sebulan
+                            await supabase
+                                .from('riwayat_setoran')
+                                .delete()
+                                .gte('tanggal', `${sD} 00:00:00+00`)
+                                .lte('tanggal', `${eD} 23:59:59+00`);
+                            
+                            // 2. Eksekusi Hapus Lapis Kedua (Fallback lewat memori visual)
+                            // Sebagai pengaman ekstra, menyapu sisa data yang memiliki format waktu kotor/tidak standar
+                            const toDeleteIds = deposits.filter(d => {
+                                const rawDate = d.tanggal || d.date;
+                                if (!rawDate) return false;
+                                
+                                // Potong paksa kaku 10 karakter pertama (mengabaikan seluruh jam)
+                                const rd = String(rawDate).trim().substring(0, 10);
+                                return rd >= sD && rd <= eD;
+                            }).filter(d => d && d.id).map(d => d.id); 
+                            
+                            if(toDeleteIds.length > 0) {
+                                const batchSize = 500;
+                                for (let i = 0; i < toDeleteIds.length; i += batchSize) {
+                                    const chunk = toDeleteIds.slice(i, i + batchSize);
+                                    await supabase.from('riwayat_setoran').delete().in('id', chunk);
+                                }
                             }
+                        } catch (err) {
+                            console.error("Gagal menghapus riwayat:", err);
+                        } finally {
+                            // Wajib menarik ulang data terbaru yang bersih dari server setelah dihapus
+                            await fetchData(); 
+                            setModal({ isOpen: false });
+                            setDelDates({ start: '', end: '' });
                         }
-                        
-                        fetchData();
-                        setModal({ isOpen: false });
-                        setDelDates({ start: '', end: '' });
                     }
                 });
             };
