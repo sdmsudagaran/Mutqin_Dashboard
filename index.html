@@ -592,17 +592,31 @@
                         const d = new Date(start); d.setDate(d.getDate() + i);
                         const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                         
-                        const dep = deposits.find(depo => {
+                        // Kumpulkan SEMUA setoran siswa ini pada tanggal tersebut (ds)
+                        const deps = deposits.filter(depo => {
                            const rawDate = depo.tanggal || depo.date;
                            if(!rawDate) return false;
                            return String(rawDate).substring(0,10) === ds && depo.nama === rekapSiswa;
                         });
 
+                        let murojaahText = '-';
+                        let ziyadahText = '-';
+
+                        if (deps.length > 0) {
+                            // Ambil teks yang ada isinya (mengabaikan EMPTY/NULL)
+                            const murList = deps.filter(d => utils.hasContent(d.murojaah)).map(d => d.murojaah);
+                            const ziyList = deps.filter(d => utils.hasContent(d.ziyadah)).map(d => d.ziyadah);
+
+                            // Gabungkan data jika ada beberapa entri dalam 1 hari
+                            if (murList.length > 0) murojaahText = murList.join('\n');
+                            if (ziyList.length > 0) ziyadahText = ziyList.join('\n');
+                        }
+
                         rekapTableData.push({
                             hari: namaHari[i],
                             tanggal: ds,
-                            murojaah: dep && utils.hasContent(dep.murojaah) ? dep.murojaah : '-',
-                            ziyadah: dep && utils.hasContent(dep.ziyadah) ? dep.ziyadah : '-'
+                            murojaah: murojaahText,
+                            ziyadah: ziyadahText
                         });
                     }
                 }
