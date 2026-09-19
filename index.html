@@ -221,11 +221,61 @@
             const fetchData = async () => {
                 setLoading(true);
                 try {
-                    const { data: setoranData } = await supabase.from('riwayat_setoran').select('*').order('tanggal', { ascending: false });
-                    const { data: siswaData } = await supabase.from('data_siswa').select('*');
+                    // Mengambil data riwayat setoran dengan paginasi otomatis (chunk) 
+                    // untuk melewati batas maksimal 1000 baris dari server Supabase,
+                    // sehingga aplikasi dapat membaca data 1 bulan berjalan atau lebih tanpa terpotong.
+                    let allSetoran = [];
+                    let fetchMore = true;
+                    let rangeStart = 0;
+                    const step = 1000;
+
+                    while (fetchMore) {
+                        const { data, error } = await supabase
+                            .from('riwayat_setoran')
+                            .select('*')
+                            .order('tanggal', { ascending: false })
+                            .range(rangeStart, rangeStart + step - 1);
+                        
+                        if (error || !data || data.length === 0) {
+                            fetchMore = false;
+                        } else {
+                            allSetoran = [...allSetoran, ...data];
+                            if (data.length < step) {
+                                fetchMore = false; // Data di server sudah habis terambil
+                            } else {
+                                rangeStart += step;
+                            }
+                        }
+                        
+                        // Pengaman: Maksimal narik 50.000 baris agar browser (HP/Laptop) tidak crash
+                        if (allSetoran.length >= 50000) fetchMore = false;
+                    }
+
+                    // Mengambil data siswa dengan cara paginasi yang sama
+                    let allSiswa = [];
+                    let fetchSiswa = true;
+                    let rangeSiswaStart = 0;
+
+                    while (fetchSiswa) {
+                        const { data, error } = await supabase
+                            .from('data_siswa')
+                            .select('*')
+                            .range(rangeSiswaStart, rangeSiswaStart + step - 1);
+                            
+                        if (error || !data || data.length === 0) {
+                            fetchSiswa = false;
+                        } else {
+                            allSiswa = [...allSiswa, ...data];
+                            if (data.length < step) {
+                                fetchSiswa = false;
+                            } else {
+                                rangeSiswaStart += step;
+                            }
+                        }
+                    }
                     
-                    setDeposits(setoranData || []);
-                    setStudents(siswaData || []);
+                    setDeposits(allSetoran);
+                    setStudents(allSiswa);
                 } catch (err) {
                     console.error("Error fetching:", err);
                 } finally {
